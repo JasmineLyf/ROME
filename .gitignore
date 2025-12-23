@@ -1,0 +1,57 @@
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+**/.DS_Store
+.vscode/
+.idea/
+
+# =========================
+# Python cache / build
+# =========================
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# =========================
+# Local scratch scripts
+# =========================
+project_tree.txt
+file_sizes.txt
+requirements_freeze.txt
+
+# =========================
+# Large artifacts (DO NOT COMMIT)
+# =========================
+# Embeddings
+data/embeddings/
+**/data/embeddings/
+
+# Checkpoints / model weights
+checkpoints/
+**/checkpoints/
+
+# Numpy / Torch artifacts anywhere
+*.npy
+*.npz
+*.pth
+*.pt
+*.bin
+
+# Logs / runs (if generated later)
+logs/
+runs/
+wandb/
+
+# =========================
+# Optional: environment files
+# =========================
+.env
+.venv/
+venv/
