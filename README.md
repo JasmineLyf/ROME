@@ -3,40 +3,43 @@
 This repository contains the code and data for the paper:  
 **Ask, Answer, and Detect: Role-Playing LLMs for Personality Detection with Question-Conditioned Mixture-of-Experts**
 
-
 ---
 
 ## Repository Structure
 
-
+```text
 ROME/
-scripts/
-model_moe.py
-train_answer_pretrain.py
-train_detect.py
-data/
-datasplit.py
-export_embeddings.py
-compute_question_weights.py
-roleplay/
-generate.py
-mbti_questionnaire.py
-data/
-mbti_1.csv
-questionnaire/
-mbti_questions.txt
-roleplay/
-answers_60_gpt4o.csv
-priors/
-q_importance.csv
-q_reliability.csv
-splits/
-train_uids.txt
-test_uids.txt
-embeddings/            # generated locally (not tracked)
-checkpoints/             # generated locally (not tracked)
-requirements.txt
-.gitignore
+  scripts/
+    model_moe.py
+    train_answer_pretrain.py
+    train_detect.py
+    mbti_questionnaire.py
+    data/
+      datasplit.py
+      export_embeddings.py
+      compute_question_weights.py
+    roleplay/
+      generate.py
+
+  data/
+    mbti_1.csv
+    questionnaire/
+      mbti_questions.txt
+    roleplay/
+      answers_60_gpt4o.csv
+    priors/
+      q_importance.csv
+      q_reliability.csv
+    splits/
+      train_uids.txt
+      test_uids.txt
+    embeddings/              # generated locally (not tracked)
+
+  checkpoints/               # generated locally (not tracked)
+  requirements.txt
+  .gitignore
+  README.md
+
 
 ````
 
