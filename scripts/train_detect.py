@@ -393,12 +393,12 @@ if __name__ == "__main__":
 
         avg_loss = total_loss / max(len(train_ld.dataset), 1)
         f1s_val, avg_val = evaluate(model, val_ld)
-        print(f"Epoch {ep:02d} Loss={avg_loss:.4f} Val AvgF1={avg_val:.3f} per-dim={f1s_val}")
+        print(f"Epoch {ep:02d} Loss={avg_loss:.4f} Val AvgF1={avg_val:.4f} per-dim={f1s_val}")
 
         if avg_val > best_val_f1:
             best_val_f1 = avg_val
             torch.save(model.state_dict(), BEST_DETECT_PATH)
-            print(f"Saved best detect checkpoint to {BEST_DETECT_PATH} (Val AvgF1={avg_val:.3f})")
+            print(f"Saved best detect checkpoint to {BEST_DETECT_PATH} (Val AvgF1={avg_val:.4f})")
 
     # Test with best checkpoint
     print("\n== Best Detect Model Test Evaluation ==")
@@ -420,10 +420,10 @@ if __name__ == "__main__":
 
     for i, dim in enumerate(dims):
         f1 = f1_score(all_trues[:, i], all_preds[:, i])
-        print(f"{dim}: Test F1 = {f1:.3f}")
+        print(f"{dim}: Test F1 = {f1:.4f}")
 
     avg_f1 = float(np.mean([f1_score(all_trues[:, i], all_preds[:, i]) for i in range(4)]))
-    print(f"Average F1 = {avg_f1:.3f}")
+    print(f"Average F1 = {avg_f1:.4f}")
 
     # Inspect gating weights
     print("\n== Gating Weights (g) per Dimension ==")
