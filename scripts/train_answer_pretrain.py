@@ -10,7 +10,7 @@ from model_moe import MoE
 # ---- Hyperparameters ----
 ANSWER_PRETRAIN_NUM_EXPERTS = 32
 ANSWER_PRETRAIN_HIDDEN_DIM  = 1024
-EPOCHS             = 100
+EPOCHS             = 120
 BATCH_SIZE         = 64
 LR                 = 5e-4
 DEVICE             = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -135,12 +135,10 @@ def prepare_data():
 
     X = np.stack(X_list)
     y = np.array(y_list, dtype=np.float32)
-
-    # 5) Split at sample-level: 8:1:1 (train/val/test)
     X_tr, X_tmp, y_tr, y_tmp = train_test_split(X, y, test_size=0.2, random_state=42)
     X_val, X_te, y_val, y_te = train_test_split(X_tmp, y_tmp, test_size=0.5, random_state=42)
 
-    # 6) Return DataLoaders and input_dim
+    # 5) Return DataLoaders and input_dim
     train_ds = AnswerPretrainDataset(X_tr, y_tr)
     val_ds   = AnswerPretrainDataset(X_val, y_val)
     test_ds  = AnswerPretrainDataset(X_te, y_te)
