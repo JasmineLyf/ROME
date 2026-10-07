@@ -10,16 +10,19 @@ This repository contains the code and data for the paper:
 ```text
 ROME/
   scripts/
+    common.py
     model_moe.py
     train_answer_pretrain.py
     train_detect.py
-    mbti_questionnaire.py
+    run_experiments.py
+    check_release.py
     data/
       datasplit.py
       export_embeddings.py
       compute_question_weights.py
     roleplay/
       generate.py
+      mbti_questionnaire.py
 
   data/
     mbti_1.csv
@@ -35,13 +38,13 @@ ROME/
       test_uids.txt
     embeddings/              # generated locally (not tracked)
 
+  tests/
+    test_paper_alignment.py
   checkpoints/               # generated locally (not tracked)
   requirements.txt
   .gitignore
   README.md
-
-
-````
+```
 
 ---
 
@@ -70,7 +73,7 @@ You can regenerate them by following the instructions below.
 - Install dependencies:
 ```bash
 pip install -r requirements.txt
-````
+```
 
 Notes:
 
@@ -103,7 +106,7 @@ In this repository we use `data/mbti_1.csv`, which follows the common Kaggle for
 
 ### Step 0 (Optional): Create splits
 
-If you want to regenerate train/test splits:
+If you want to regenerate train/validation/test splits:
 
 ```bash
 python scripts/data/datasplit.py
@@ -112,9 +115,10 @@ python scripts/data/datasplit.py
 This produces:
 
 * `data/splits/train_uids.txt`
+* `data/splits/val_uids.txt`
 * `data/splits/test_uids.txt`
 
-If these files already exist, you may skip this step.
+If these files already exist, you may skip this step. If `val_uids.txt` is absent, the scripts automatically derive the validation set from the training pool to form a user-level 60/20/20 split.
 
 ---
 
@@ -130,6 +134,8 @@ Expected outputs (not tracked):
 
 * `data/embeddings/train_post_embeddings.npy`
 * `data/embeddings/train_post_index_map.npy`
+* `data/embeddings/val_post_embeddings.npy`
+* `data/embeddings/val_post_index_map.npy`
 * `data/embeddings/test_post_embeddings.npy`
 * `data/embeddings/test_post_index_map.npy`
 * `data/embeddings/question_embeddings.npy`
@@ -149,7 +155,7 @@ Expected outputs:
 * `data/priors/q_importance.csv`
 * `data/priors/q_reliability.csv`
 
-If these files already exist, you may skip this step.
+This export step is optional. Detect computes question priors directly from the training users.
 
 ---
 
@@ -182,7 +188,7 @@ Expected output (not tracked):
 During training, the script prints:
 
 * validation macro-F1 across the four dimensions
-* test macro-F1 and per-dimension F1 after loading the best checkpoint
+* test macro-F1 and per-dimension macro-F1 after loading the best checkpoint
 
 ---
 
@@ -225,8 +231,8 @@ If available, the following official repositories are relevant:
 
 ## Reproducibility Notes
 
-* The provided split files (`data/splits/*.txt`) define the user-level train/test partition.
-* The evaluation follows dimension-wise binary classification for **IE/SN/TF/PJ**, and reports macro-F1 across four dimensions.
+* The provided split files (`data/splits/*.txt`) define the user-level partition. All training stages use the same 60/20/20 train/validation/test split.
+* The evaluation follows dimension-wise binary classification for **IE/SN/TF/PJ**, and reports the average of the four per-dimension macro-F1 scores.
 * Large artifacts (embeddings/checkpoints) are generated locally and are not committed.
 
 ---
@@ -240,4 +246,4 @@ If available, the following official repositories are relevant:
   booktitle = {Anonymous Submission},
   year      = {2026}
 }
-
+```

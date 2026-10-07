@@ -7,6 +7,7 @@ def load_questions(filepath):
 
 
 def build_prompt(mbti_type, posts, questions):
+    questions = "\n".join(questions)
     return f"""
 You are an expert MBTI personality simulator. Your task is to carefully role-play a person based primarily on their social media posts, 
 using the provided MBTI type only as a supporting hint. Analyze the language, style, topics, and emotions expressed in the posts to infer 

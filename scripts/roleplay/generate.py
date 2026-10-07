@@ -1,133 +1,100 @@
+"""Offline Ask generation; held-out test users are never sent to the LLM."""
+import argparse
 import csv
-import time
+from pathlib import Path
 import re
-import os
+import sys
+import time
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from common import DATA_DIR, load_splits, load_metadata
+from roleplay.mbti_questionnaire import load_questions, build_prompt
 
-from openai import OpenAI
-from src.roleplay.mbti_questionnaire import load_questions, build_prompt
-
-# client = OpenAI(api_key="YOUR_API_KEY")  # Do NOT hardcode keys
-client = OpenAI()
-
-MODEL = "gpt-4o"
-TEMPERATURE = 0.7
-N_TRIALS = 5
-SLEEP_SECONDS = 0.5
-
-
-def load_user_data(csv_path):
-    user_data = []
-    with open(csv_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for idx, row in enumerate(reader):
-            mbti_type = (row.get("type") or "").strip()
-            posts = (row.get("posts") or "").strip()
-            if not mbti_type or not posts:
-                continue
-
-            uid_raw = row.get("uids", "").strip()
-            uid = int(uid_raw) if uid_raw.isdigit() else idx
-            user_data.append((uid, mbti_type, posts))
-    return user_data
-
-
-def call_gpt(prompt):
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=TEMPERATURE,
-    )
-    return resp.choices[0].message.content
+MODEL = 'gpt-4o-2024-08-06'
+# Retain the five sampling temperatures found in the bundled Ask responses.
+TEMPERATURES = [0.2, 0.3, 0.4, 0.5, 0.6]
 
 
 def parse_answers(output):
-    lines = output.strip().splitlines()
     answers = [None] * 60
-    pred_type = ""
-
-    for line in lines:
-        if line.strip().lower().startswith("q") and ":" in line:
-            try:
-                qidx, score = line.strip().split(":", 1)
-                qnum = int(qidx.lower().replace("q", "").strip()) - 1
-                if 0 <= qnum < 60:
-                    answers[qnum] = score.strip()
-            except Exception:
-                pass
-
-    for line in reversed(lines):
-        m = re.fullmatch(r"[EINPSFTJ]{4}", line.strip().upper())
-        if m:
-            pred_type = m.group(0)
-            break
-
-    return pred_type, answers
-
-
-def load_existing_tags(path):
-    done = set()
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                done.add(row["user_id"])
-    return done
-
-
-def ensure_parent_dir(path):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    predicted_type = ''
+    for line in output.strip().splitlines():
+        match = re.fullmatch(r'Q(\d+)\s*:\s*([+-]?[0-3])', line.strip(), re.IGNORECASE)
+        if match:
+            number, score = int(match[1]), int(match[2])
+            if not 1 <= number <= 60 or answers[number - 1] is not None:
+                raise ValueError('Invalid or duplicate question number.')
+            answers[number - 1] = score
+        elif re.fullmatch(r'[IE][SN][TF][PJ]', line.strip().upper()):
+            predicted_type = line.strip().upper()
+    if any(value is None for value in answers):
+        raise ValueError('Expected 60 integer answers in [-3, 3]; incomplete output was not saved.')
+    return predicted_type, answers
 
 
 def main():
-    questions_path = "data/questionnaire/mbti_questions.txt"
-    raw_csv_path = "data/mbti_1.csv"
-    output_file = "data/roleplay/answers_60_gpt4o.csv"
-
-    if not os.path.exists(questions_path):
-        raise FileNotFoundError(f"Missing questions file: {questions_path}")
-    if not os.path.exists(raw_csv_path):
-        raise FileNotFoundError(f"Missing raw data file: {raw_csv_path}")
-
-    ensure_parent_dir(output_file)
-
-    questions = load_questions(questions_path)
-    user_data = load_user_data(raw_csv_path)
-
-    existing = load_existing_tags(output_file)
-    write_header = (not os.path.exists(output_file)) or (os.stat(output_file).st_size == 0)
-
-    fieldnames = ["user_id", "true_type", "pred_type"] + [f"Q{i+1}" for i in range(60)]
-
-    with open(output_file, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--output', type=Path, default=DATA_DIR / 'roleplay/answers_60_gpt4o.csv')
+    parser.add_argument('--model', default=MODEL)
+    args = parser.parse_args()
+    from openai import OpenAI
+    client = OpenAI()
+    questions = load_questions(DATA_DIR / 'questionnaire/mbti_questions.txt')
+    if len(questions) != 60:
+        raise ValueError('Expected 60 questionnaire items.')
+    train, val, _ = load_splits()
+    # Validation responses only select the Answer checkpoint; they receive no gradients.
+    metadata = load_metadata().loc[train + val]
+    fields = ['user_id', 'true_type', 'pred_type', 'temperature'] + [f'Q{i}' for i in range(1, 61)] + ['uids']
+    existing = set()
+    if args.output.exists() and args.output.stat().st_size:
+        with args.output.open(newline='', encoding='utf-8') as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames != fields:
+                raise ValueError('Existing CSV schema differs; select a separate --output file.')
+            for row in reader:
+                try:
+                    values = [float(row[f'Q{i}']) for i in range(1, 61)]
+                    valid = all(-3 <= x <= 3 and x.is_integer() for x in values)
+                except (ValueError, TypeError):
+                    valid = False
+                if valid:
+                    existing.add(row['user_id'])
+                else:
+                    existing.discard(row['user_id'])
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    write_header = not args.output.exists() or args.output.stat().st_size == 0
+    failures = []
+    with args.output.open('a', newline='', encoding='utf-8') as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
         if write_header:
             writer.writeheader()
-
-        for uid, true_type, posts in user_data:
-            for trial in range(N_TRIALS):
-                tag = f"{uid}_gpt4o_trial{trial+1}"
+        for uid, user in metadata.iterrows():
+            prompt = build_prompt(user['type'], user['posts'], questions)
+            for temperature in TEMPERATURES:
+                tag = f'{uid}_temp{temperature:.1f}'
                 if tag in existing:
                     continue
-
-                prompt = build_prompt(true_type, posts, questions)
-
                 try:
-                    resp = call_gpt(prompt)
-                    pred_type, answers = parse_answers(resp)
-                except Exception as e:
-                    print(f"Error for {tag}: {e}")
+                    response = client.chat.completions.create(
+                        model=args.model, messages=[{'role': 'user', 'content': prompt}],
+                        temperature=temperature,
+                    )
+                    predicted_type, answers = parse_answers(response.choices[0].message.content)
+                except Exception as error:
+                    failures.append(tag)
+                    print(f'Failed {tag}: {error}')
                     continue
-
-                row = {"user_id": tag, "true_type": true_type, "pred_type": pred_type}
-                for i in range(60):
-                    row[f"Q{i+1}"] = answers[i] if answers[i] is not None else ""
+                row = dict(zip([f'Q{i}' for i in range(1, 61)], answers))
+                row.update(user_id=tag, true_type=user['type'], pred_type=predicted_type,
+                           temperature=temperature, uids=uid)
                 writer.writerow(row)
-                f.flush()
+                handle.flush()
+                existing.add(tag)
+                time.sleep(0.5)
+    if failures:
+        raise RuntimeError(f'{len(failures)} Ask trials failed; rerun to retry: {failures[:10]}')
+    print(f'Saved Ask responses to {args.output}')
 
-                time.sleep(SLEEP_SECONDS)
 
-    print(f"[OK] Wrote: {output_file}")
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

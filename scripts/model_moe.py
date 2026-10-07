@@ -41,6 +41,6 @@ class MoE(nn.Module):
         expert_outs = torch.stack([e(x) for e in self.experts], dim=1)  # [batch, num_experts]
         out = (gate * expert_outs).sum(dim=1)  # [batch]
         if return_gates:
-            return out, gate  # 返回 (输出, gate 权重)
+            return out, gate
         return out
 
