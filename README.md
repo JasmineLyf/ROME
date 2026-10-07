@@ -268,9 +268,9 @@ python -m unittest discover -s tests -v
 
 ```bibtex
 @inproceedings{rome2026,
-  title     = {Ask, Answer, and Detect: Role-Playing LLMs for Personality Detection with Question-Conditioned Mixture-of-Experts},
-  author    = {Anonymous},
-  booktitle = {Anonymous Submission},
+  title     = {Ask, Answer, and Detect: Role-Playing {LLMs} for Personality Detection with Question-Conditioned Mixture-of-Experts},
+  author    = {Lyu, Yifan and Zhang, Liang},
+  booktitle = {Advances in Neural Information Processing Systems},
   year      = {2026}
 }
 ```
