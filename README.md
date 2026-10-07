@@ -238,7 +238,7 @@ The following baseline repositories are available:
 
 * D-DGCN: [https://github.com/djz233/D-DGCN](https://github.com/djz233/D-DGCN)
 * ETM: [https://github.com/BUPT-SN/ETM](https://github.com/BUPT-SN/ETM)
-
+* EmoPerso: [https://github.com/slz0925/EmoPerso.](https://github.com/slz0925/EmoPerso.)
 ---
 
 ## Reproducibility Notes
