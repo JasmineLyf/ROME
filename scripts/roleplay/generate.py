@@ -10,7 +10,7 @@ from common import DATA_DIR, load_splits, load_metadata
 from roleplay.mbti_questionnaire import load_questions, build_prompt
 
 MODEL = 'gpt-4o-2024-08-06'
-# Retain the five sampling temperatures found in the bundled Ask responses.
+# Use five sampling temperatures for each training/validation user.
 TEMPERATURES = [0.2, 0.3, 0.4, 0.5, 0.6]
 
 
@@ -36,8 +36,6 @@ def main():
     parser.add_argument('--output', type=Path, default=DATA_DIR / 'roleplay/answers_60_gpt4o.csv')
     parser.add_argument('--model', default=MODEL)
     args = parser.parse_args()
-    from openai import OpenAI
-    client = OpenAI()
     questions = load_questions(DATA_DIR / 'questionnaire/mbti_questions.txt')
     if len(questions) != 60:
         raise ValueError('Expected 60 questionnaire items.')
@@ -61,6 +59,8 @@ def main():
                     existing.add(row['user_id'])
                 else:
                     existing.discard(row['user_id'])
+    from openai import OpenAI
+    client = OpenAI()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     write_header = not args.output.exists() or args.output.stat().st_size == 0
     failures = []

@@ -1,70 +1,73 @@
-"""Audit bundled data against the paper without generating answers or training.
+"""Check source files and locally generated training inputs.
 
-Usage: python scripts/check_release.py [--strict]
-Strict mode fails when known data limitations prevent a verified paper reproduction.
+A fresh source checkout does not include generated artifacts. Use --strict after
+preprocessing to require complete training inputs. This is not a score comparison.
 """
 import argparse
 import json
 import warnings
-import numpy as np
-import pandas as pd
-from common import (DIMS, QUESTION_COLS, DATA_DIR, load_metadata, load_answers,
+from pathlib import Path
+from common import (DATA_DIR, QUESTION_COLS, load_metadata, load_answers,
                     load_splits, answer_targets, compute_priors, validate_split_coverage)
-
-PAPER_COUNTS = {
-    'train': [[4032, 1173], [724, 4481], [2388, 2817], [3160, 2045]],
-    'val': [[1330, 405], [230, 1505], [802, 933], [1007, 728]],
-    'test': [[1314, 421], [243, 1492], [791, 944], [1074, 661]],
-}
+from data.export_embeddings import load_questions
 
 
-def audit():
-    metadata, answers, partitions = load_metadata(), load_answers(), load_splits()
-    validate_split_coverage(metadata, partitions)
-    counts = {}
-    for name, ids in zip(['train', 'val', 'test'], partitions):
-        labels = metadata.loc[ids, 'type']
-        counts[name] = [[int((labels.str[i] == c).sum()) for c in dim]
-                        for i, dim in enumerate(DIMS)]
-    selected = answers[answers.uids.isin(partitions[0] + partitions[1])]
-    incomplete = selected[selected[QUESTION_COLS].isna().any(axis=1)]
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore', RuntimeWarning)
-        answer_targets(answers, partitions[0] + partitions[1])
-        importance, reliability = compute_priors(answers, metadata, partitions[0])
-    limitations = []
-    if counts != PAPER_COUNTS:
-        limitations.append('Bundled user IDs do not reproduce Table 4 class counts; original experiment splits are needed.')
-    if not incomplete.empty:
-        limitations.append('Incomplete Ask trials must be regenerated for fixed-T reproduction.')
-    saved_importance = pd.read_csv(DATA_DIR / 'priors/q_importance.csv').set_index('question')
-    saved_reliability = pd.read_csv(DATA_DIR / 'priors/q_reliability.csv').set_index('question')
-    old_rel = (saved_reliability['q_reliability'] if 'q_reliability' in saved_reliability
-               else 1 - saved_reliability['q_uncertainty'])
-    stale_priors = not (np.allclose(saved_importance.loc[QUESTION_COLS, 'q_importance'], importance, atol=1e-6)
-                       and np.allclose(old_rel.loc[QUESTION_COLS], reliability, atol=1e-6))
-    return {
-        'split_sizes': dict(zip(['train', 'val', 'test'], map(len, partitions))),
-        'dimensions': DIMS,
-        'actual_class_counts': counts,
-        'paper_table4_class_counts': PAPER_COUNTS,
-        'incomplete_training_or_validation_trials': incomplete[['user_id', 'uids']].to_dict('records'),
-        'missing_training_or_validation_scores': int(selected[QUESTION_COLS].isna().sum().sum()),
-        'bundled_priors_are_stale': stale_priors,
-        'prior_handling': 'Detect recomputes priors from training users; exported legacy priors are not used.',
-        'reproduction_limitations': limitations,
-        'scope': 'Kaggle main pipeline only; Pandora, baselines, and ablation runners are not included.',
-        'verification_limit': 'This audit does not verify paper scores or the provenance of cached LLM responses.',
-    }
+def audit(data_dir=DATA_DIR):
+    data_dir = Path(data_dir)
+    report = {'source_ready': False, 'training_ready': False, 'next_steps': [], 'errors': []}
+    try:
+        metadata = load_metadata(data_dir / 'mbti_1.csv')
+        load_questions(data_dir / 'questionnaire/mbti_questions.txt')
+        report['source_ready'] = True
+    except (OSError, ValueError, KeyError) as error:
+        report['errors'].append(str(error))
+        return report
+    split_dir = data_dir / 'splits'
+    if not all((split_dir / name).is_file() for name in ['train_uids.txt', 'test_uids.txt']):
+        report['next_steps'].append('python scripts/data/datasplit.py')
+        partitions = None
+    else:
+        try:
+            partitions = load_splits(split_dir)
+            validate_split_coverage(metadata, partitions)
+            report['split_sizes'] = dict(zip(['train', 'val', 'test'], map(len, partitions)))
+        except (OSError, ValueError, KeyError) as error:
+            report['errors'].append(str(error))
+            partitions = None
+    answer_path = data_dir / 'roleplay/answers_60_gpt4o.csv'
+    if not answer_path.is_file():
+        report['next_steps'].append('Set OPENAI_API_KEY, then run: python scripts/roleplay/generate.py')
+    elif partitions is not None:
+        try:
+            answers = load_answers(answer_path)
+            selected = answers[answers.uids.isin(partitions[0] + partitions[1])]
+            if selected[QUESTION_COLS].isna().any().any():
+                report['errors'].append('Incomplete Ask trials; rerun scripts/roleplay/generate.py to repair them.')
+            with warnings.catch_warnings():
+                warnings.simplefilter('ignore', RuntimeWarning)
+                answer_targets(answers, partitions[0] + partitions[1])
+                compute_priors(answers, metadata, partitions[0])
+        except (OSError, ValueError, KeyError) as error:
+            report['errors'].append(str(error))
+    embedding_names = ['question_embeddings.npy']
+    for split in ['train', 'val', 'test']:
+        embedding_names.extend([f'{split}_post_embeddings.npy', f'{split}_post_index_map.npy'])
+    if any(not (data_dir / 'embeddings' / name).is_file() for name in embedding_names):
+        report['next_steps'].append('python scripts/data/export_embeddings.py')
+    report['prior_export'] = 'Optional: Detect computes priors directly from training users.'
+    report['training_ready'] = not report['next_steps'] and not report['errors']
+    report['verification_scope'] = 'Checks data prerequisites; embedding numerical checks also run in training.'
+    return report
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--data-dir', type=Path, default=DATA_DIR)
     parser.add_argument('--strict', action='store_true')
     args = parser.parse_args()
-    report = audit()
+    report = audit(args.data_dir)
     print(json.dumps(report, indent=2))
-    if args.strict and report['reproduction_limitations']:
+    if report['errors'] or (args.strict and not report['training_ready']):
         raise SystemExit(1)
 
 

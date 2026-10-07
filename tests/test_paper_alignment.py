@@ -14,24 +14,44 @@ import common
 import train_answer_pretrain as answer
 import train_detect as detect
 from roleplay.generate import parse_answers
+from data import datasplit
+from check_release import audit
+
+
+def synthetic_data():
+    metadata = pd.DataFrame({'uids': range(10), 'type': ['ISTP', 'ENFJ'] * 5,
+                             'posts': [f'Example user {i} post.' for i in range(10)]}).set_index('uids', drop=False)
+    rows = []
+    for uid in range(10):
+        for trial in range(5):
+            rows.append({'uids': uid, 'user_id': f'{uid}_trial{trial}',
+                         **{q: ((uid + trial + i) % 7) - 3 for i, q in enumerate(common.QUESTION_COLS)}})
+    return metadata, pd.DataFrame(rows), (list(range(6)), [6, 7], [8, 9])
 
 
 class PaperAlignmentTests(unittest.TestCase):
     def test_user_splits_and_targets(self):
-        train, val, test = common.load_splits()
-        self.assertEqual([len(train), len(val), len(test)], [5205, 1735, 1735])
-        self.assertFalse(set(train) & set(val) or set(train) & set(test) or set(val) & set(test))
+        from contextlib import redirect_stdout
+        metadata, samples, _ = synthetic_data()
         with tempfile.TemporaryDirectory() as directory:
-            for name, ids in zip(['train', 'val', 'test'], [train, val, test]):
-                (Path(directory) / f'{name}_uids.txt').write_text('\n'.join(map(str, ids)))
-            self.assertEqual(common.load_splits(directory), (train, val, test))
-        targets = common.answer_targets(common.load_answers(), train + val)
-        self.assertTrue(np.isfinite(targets.to_numpy()).all())
+            directory = Path(directory)
+            raw = directory / 'raw.csv'
+            metadata.to_csv(raw, index=False)
+            arguments = ['datasplit.py', '--input_csv', str(raw), '--out_dir', str(directory / 'splits')]
+            with patch.object(sys, 'argv', arguments), redirect_stdout(io.StringIO()):
+                datasplit.main()
+                first = common.load_splits(directory / 'splits')
+                datasplit.main()
+            self.assertEqual(first, common.load_splits(directory / 'splits'))
+            train, val, test = first
+            self.assertEqual([len(train), len(val), len(test)], [6, 2, 2])
+            self.assertFalse(set(train) & set(val) or set(train) & set(test) or set(val) & set(test))
+            common.validate_split_coverage(metadata, first)
+            targets = common.answer_targets(samples, train + val)
+            self.assertTrue(np.isfinite(targets.to_numpy()).all())
 
     def test_priors_ignore_held_out_data(self):
-        samples = common.load_answers()
-        metadata = common.load_metadata()
-        train, val, test = common.load_splits()
+        metadata, samples, (train, val, test) = synthetic_data()
         baseline = common.compute_priors(samples, metadata, train)
         samples.loc[samples.uids.isin(val + test), common.QUESTION_COLS] = 999
         metadata.loc[val + test, 'type'] = 'ENTJ'
@@ -123,11 +143,9 @@ class PaperAlignmentTests(unittest.TestCase):
 
     def test_two_stage_training_smoke(self):
         from contextlib import ExitStack, redirect_stdout, redirect_stderr
-        train, val, test = common.load_splits()
-        train, val, test = train[:32], val[:8], test[:8]
+        metadata, samples, (train, val, test) = synthetic_data()
         users = {uid: np.random.default_rng(uid).normal(size=5).astype(np.float32)
                  for uid in train + val + test}
-        samples = common.load_answers()
         samples = samples[samples.uids.isin(train + val)]
         with tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
             directory = Path(directory)
@@ -140,6 +158,7 @@ class PaperAlignmentTests(unittest.TestCase):
                 stack.enter_context(patch.object(module, 'load_answers', return_value=samples))
                 stack.enter_context(patch.multiple(module, ANSWER_PRETRAIN_NUM_EXPERTS=2,
                                                  ANSWER_PRETRAIN_HIDDEN_DIM=8, DEVICE=torch.device('cpu')))
+            stack.enter_context(patch.object(detect, 'load_metadata', return_value=metadata))
             stack.enter_context(patch.object(answer, 'DATA_DIR', directory))
             stack.enter_context(patch.multiple(detect, QUEST_EMB=q_path, TRUNK_HIDDEN=8, HEAD_HIDDEN=4))
             stack.enter_context(redirect_stdout(io.StringIO()))
@@ -220,6 +239,43 @@ class PaperAlignmentTests(unittest.TestCase):
             for call in calls:
                 self.assertNotIn('never-test-text', call['messages'][0]['content'])
                 self.assertEqual(call['model'], 'gpt-4o-2024-08-06')
+
+    def test_fresh_checkout_audit_requires_no_generated_artifacts(self):
+        metadata, _, _ = synthetic_data()
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            metadata.to_csv(directory / 'mbti_1.csv', index=False)
+            (directory / 'questionnaire').mkdir()
+            (directory / 'questionnaire/mbti_questions.txt').write_text(
+                '\n'.join(f'Q{i}: Question {i}' for i in range(1, 61)))
+            report = audit(directory)
+            self.assertTrue(report['source_ready'])
+            self.assertFalse(report['training_ready'])
+            self.assertEqual(report['errors'], [])
+            self.assertEqual(len(report['next_steps']), 3)
+            with self.assertRaisesRegex(FileNotFoundError, 'datasplit.py'):
+                common.load_splits(directory / 'splits')
+            with self.assertRaisesRegex(FileNotFoundError, 'generate.py'):
+                common.load_answers(directory / 'roleplay/answers_60_gpt4o.csv')
+
+    def test_prior_exports_are_optional_for_training_readiness(self):
+        metadata, samples, partitions = synthetic_data()
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            metadata.to_csv(directory / 'mbti_1.csv', index=False)
+            for folder in ['questionnaire', 'splits', 'roleplay', 'embeddings']:
+                (directory / folder).mkdir()
+            (directory / 'questionnaire/mbti_questions.txt').write_text(
+                '\n'.join(f'Q{i}: Question {i}' for i in range(1, 61)))
+            for split, ids in zip(['train', 'val', 'test'], partitions):
+                (directory / 'splits' / f'{split}_uids.txt').write_text('\n'.join(map(str, ids)))
+                np.save(directory / 'embeddings' / f'{split}_post_embeddings.npy', np.ones((len(ids), 3)))
+                np.save(directory / 'embeddings' / f'{split}_post_index_map.npy', np.array([[u, 0] for u in ids]))
+            np.save(directory / 'embeddings/question_embeddings.npy', np.ones((60, 3)))
+            samples.to_csv(directory / 'roleplay/answers_60_gpt4o.csv', index=False)
+            report = audit(directory)
+            self.assertTrue(report['training_ready'], report)
+            self.assertFalse((directory / 'priors').exists())
 
     def test_no_chinese_comments(self):
         for path in (common.ROOT / 'scripts').rglob('*.py'):

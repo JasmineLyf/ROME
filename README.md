@@ -28,14 +28,9 @@ ROME/
     mbti_1.csv
     questionnaire/
       mbti_questions.txt
-    roleplay/
-      answers_60_gpt4o.csv
-    priors/
-      q_importance.csv
-      q_reliability.csv
-    splits/
-      train_uids.txt
-      test_uids.txt
+    splits/                  # generated locally (not tracked)
+    roleplay/                # generated locally (not tracked)
+    priors/                  # generated locally (not tracked)
     embeddings/              # generated locally (not tracked)
 
   tests/
@@ -53,13 +48,13 @@ ROME/
 ### Included in this repository
 - **Raw MBTI dataset**: `data/mbti_1.csv`
 - **Questionnaire items**: `data/questionnaire/mbti_questions.txt`
-- **Train/test splits (UID lists)**: `data/splits/train_uids.txt`, `data/splits/test_uids.txt`
-- **Role-played question-level answers (Ask stage output)**: `data/roleplay/answers_60_gpt4o.csv`
-- **Question priors**: `data/priors/q_importance.csv`, `data/priors/q_reliability.csv`
 - All source code under `scripts/`
 
 ### Not included (generated artifacts)
-To keep the repository lightweight, the following large artifacts are **not** tracked:
+The following experiment artifacts are generated locally and are **not** included in this repository:
+- **Train/validation/test splits (UID lists)**: `data/splits/*`
+- **Role-played question-level answers (Ask stage output)**: `data/roleplay/answers_60_gpt4o.csv`
+- **Question priors**: `data/priors/q_importance.csv`, `data/priors/q_reliability.csv`
 - **Post/question embeddings** (`.npy`), e.g., `data/embeddings/*`
 - **Model checkpoints** (`.pth`), e.g., `checkpoints/*`
 
@@ -95,7 +90,7 @@ In this repository we use `data/mbti_1.csv`, which follows the common Kaggle for
 
 ### Role-play answers (Ask output)
 
-`data/roleplay/answers_60_gpt4o.csv` contains question-level soft answers used for supervision in the Answer stage:
+The locally generated `data/roleplay/answers_60_gpt4o.csv` contains question-level answers used for supervision in the Answer stage:
 
 * `uids`
 * `Q1 ... Q60`: numeric soft answers (Likert-style)
@@ -104,9 +99,9 @@ In this repository we use `data/mbti_1.csv`, which follows the common Kaggle for
 
 ## Quickstart: Run ROME End-to-End
 
-### Step 0 (Optional): Create splits
+### Step 0: Create splits
 
-If you want to regenerate train/validation/test splits:
+Generate a user-level 60/20/20 train/validation/test split:
 
 ```bash
 python scripts/data/datasplit.py
@@ -118,7 +113,7 @@ This produces:
 * `data/splits/val_uids.txt`
 * `data/splits/test_uids.txt`
 
-If these files already exist, you may skip this step. If `val_uids.txt` is absent, the scripts automatically derive the validation set from the training pool to form a user-level 60/20/20 split.
+Use the same split files throughout Ask generation, Answer pretraining, and Detect training. The default split seed is 42. If the split changes, regenerate the corresponding artifacts before retraining.
 
 ---
 
@@ -142,9 +137,25 @@ Expected outputs (not tracked):
 
 ---
 
-### Step 2 (Optional): Compute question priors
+### Step 2: Generate role-play answers (Ask)
 
-If you want to recompute question priors:
+Set `OPENAI_API_KEY` in your environment, then run:
+
+```bash
+python scripts/roleplay/generate.py
+```
+
+This step uses `gpt-4o-2024-08-06` to produce five trials per training/validation user, with temperatures 0.2, 0.3, 0.4, 0.5, and 0.6. It requires API access and incurs API usage charges. Generated answers are saved to:
+
+* `data/roleplay/answers_60_gpt4o.csv`
+
+The script resumes completed trials automatically. It generates no test-user responses. Validation responses are used only to select the Answer checkpoint; they do not contribute gradient updates. Detect evaluation uses posts and class labels without generated answers.
+
+---
+
+### Step 3 (Optional): Export question priors
+
+After generating the Ask answers, export training-only question priors if needed:
 
 ```bash
 python scripts/data/compute_question_weights.py
@@ -159,7 +170,7 @@ This export step is optional. Detect computes question priors directly from the 
 
 ---
 
-### Step 3: Answer-pretrain (question-level regression)
+### Step 4: Answer-pretrain (question-level regression)
 
 Train the question-conditioned MoE to predict question-level soft answers.
 
@@ -173,7 +184,7 @@ Expected output (not tracked):
 
 ---
 
-### Step 4: Detect (final personality prediction)
+### Step 5: Detect (final personality prediction)
 
 Train the final detection model, which loads the answer-pretrained checkpoint and performs dimension-wise classification with auxiliary regression.
 
@@ -194,35 +205,36 @@ During training, the script prints:
 
 ## Baselines
 
-We compare ROME with a broad set of strong baselines previously reported on MBTI personality detection, spanning multiple modeling paradigms:
+The paper compares ROME with 16 baseline methods (Table 1), grouped as follows:
 
-1. **Traditional feature-based methods**
+1. **Traditional and basic neural models**
 
-   * **XGBoost**: concatenates all posts per user into a single document, builds bag-of-words features, and trains a boosted tree classifier for user-level prediction.
+   * **XGBoost**: gradient-boosted trees using text features.
+   * **BiLSTM**: bidirectional LSTM-based text encoding.
+   * **BERTconcat**: concatenates user posts for BERT encoding and classification.
+   * **BERTmean**: averages BERT post embeddings to form a user representation.
 
-2. **Sequence and hierarchical text encoders**
+2. **Deep and structure-enhanced models**
 
-   * **BiLSTM**: encodes user content with bidirectional LSTMs and aggregates representations to form a user vector.
-   * **AttRCNN**: hierarchical RCNN-style encoders with attention mechanisms to extract deep semantic features from social text.
-   * **AttnSeq**: hierarchical attention over words and messages (posts) to obtain an aggregated user representation.
+   * **AttRCNN**: attention-based recurrent convolutional text encoding.
+   * **AttnSeq**: hierarchical attention over words and posts.
+   * **Transformer-MD**: multi-document Transformer modeling across user posts.
+   * **TrigNet**: psycholinguistic tripartite graph modeling.
+   * **PQ-Net**: psychological knowledge-guided personality modeling.
+   * **D-DGCN**: dynamic graph construction and deep graph convolution over posts.
+   * **D-DGCN+ℓ₀**: the ℓ₀-regularized D-DGCN variant.
+   * **MvP**: multi-view mixture-of-experts for textual personality detection.
 
-3. **PLM-based text-only baselines**
+3. **LLM-assisted methods**
 
-   * **BERTconcat**: concatenates all posts into a single long sequence and encodes it with BERT before classification.
-   * **BERTmean**: encodes each post with BERT and aggregates post embeddings by mean pooling to form the user representation.
+   * **TAE**: LLM-generated multi-perspective analyses with contrastive learning.
+   * **ETM**: LLM-derived long-text embeddings and label-aware alignment.
+   * **LL4G**: LLM semantic embeddings for graph construction and user representation learning.
+   * **EmoPerso**: conditioned paraphrasing and contextual feature completion for emotion-aware personality representations.
 
-4. **Cross-post interaction and graph-based fusion**
+The paper uses GPT-4o-based variants of LL4G and EmoPerso. The scripts in this repository implement ROME; baseline methods are listed here to describe the experimental comparison.
 
-   * **Transformer-MD**: multi-document Transformer architectures designed to reduce order bias and enable cross-post information access.
-   * **TrigNet**: builds a psycholinguistic tripartite graph over posts/words/LIWC-style categories and aggregates signals via graph attention.
-   * **D-DGCN**: dynamically induces post graphs and applies deep graph convolutions for order-agnostic evidence fusion.
-
-5. **LLM-enhanced baselines**
-
-   * **TAE**: leverages LLM-generated multi-perspective augmentations and distills them into a lightweight encoder for improved representations.
-   * **ETM**: uses LLM-based embeddings and label-side multi-view descriptions aligned to users via a contrastive objective.
-
-If available, the following official repositories are relevant:
+The following baseline repositories are available:
 
 * D-DGCN: [https://github.com/djz233/D-DGCN](https://github.com/djz233/D-DGCN)
 * ETM: [https://github.com/BUPT-SN/ETM](https://github.com/BUPT-SN/ETM)
@@ -231,9 +243,24 @@ If available, the following official repositories are relevant:
 
 ## Reproducibility Notes
 
-* The provided split files (`data/splits/*.txt`) define the user-level partition. All training stages use the same 60/20/20 train/validation/test split.
+* Generate split files with `scripts/data/datasplit.py` before running the remaining stages. All training stages use the same 60/20/20 train/validation/test split.
 * The evaluation follows dimension-wise binary classification for **IE/SN/TF/PJ**, and reports the average of the four per-dimension macro-F1 scores.
-* Large artifacts (embeddings/checkpoints) are generated locally and are not committed.
+* Splits, Ask answers, question priors, embeddings, and checkpoints are generated locally and are not committed.
+* Ask generation uses training labels as offline hints; test labels and test answers are not used for training or prior estimation.
+
+To repeat Answer and Detect training over five seeds after preprocessing:
+
+```bash
+python scripts/run_experiments.py
+```
+
+This uses seeds 42–46 on the same fixed data split and reports the mean and standard deviation of Macro-F1 in `checkpoints/five_seed_metrics.json`.
+
+Offline tests use temporary synthetic fixtures and do not require API credentials or generated experiment artifacts:
+
+```bash
+python -m unittest discover -s tests -v
+```
 
 ---
 

@@ -54,8 +54,11 @@ def load_uids(path):
 
 
 def load_splits(split_dir=DATA_DIR / 'splits'):
-    """Use explicit 60/20/20 files, or subdivide the bundled 80% training pool."""
+    """Use generated 60/20/20 files; support legacy 80% training pools."""
     split_dir = Path(split_dir)
+    for name in ['train_uids.txt', 'test_uids.txt']:
+        if not (split_dir / name).is_file():
+            raise FileNotFoundError('Missing split files. Run: python scripts/data/datasplit.py')
     train = load_uids(split_dir / 'train_uids.txt')
     test = load_uids(split_dir / 'test_uids.txt')
     val_path = split_dir / 'val_uids.txt'
@@ -88,6 +91,8 @@ def load_metadata(path=DATA_DIR / 'mbti_1.csv'):
 
 
 def load_answers(path=DATA_DIR / 'roleplay/answers_60_gpt4o.csv'):
+    if not Path(path).is_file():
+        raise FileNotFoundError('Missing Ask answers. Set OPENAI_API_KEY and run: python scripts/roleplay/generate.py')
     df = pd.read_csv(path, low_memory=False)
     if 'user_id' in df:
         # A successful retry supersedes an earlier incomplete sample with the same tag.

@@ -55,3 +55,9 @@ wandb/
 .env
 .venv/
 venv/
+
+# Locally generated experiment artifacts
+data/splits/
+data/roleplay/
+data/priors/
+.env.*
